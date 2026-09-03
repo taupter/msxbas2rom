@@ -36,6 +36,24 @@ The system SHALL consult `openspec/specs/architecture/spec.md` for current archi
 - **WHEN** making architectural decisions
 - **THEN** the architecture spec SHALL be consulted for context and precedent
 
+### Requirement: RFCs follow the PROBE structure
+RFCs under `doc/rfc/` SHALL follow the PROBE structure with the sections: **Problem**, **Root cause**, **Options**, **Best solution**, **Evaluation**. RFCs are used for feature proposals; ADRs (`doc/adr/`) are used for architectural decisions.
+
+The existing `doc/rfc/RFC-001 Sprite Collision Hitbox Margins.md` is exempt from this format requirement and SHALL remain unchanged.
+
+#### Scenario: New RFC follows PROBE structure
+- **WHEN** a new RFC is created under `doc/rfc/`
+- **THEN** it SHALL contain the PROBE sections: Problem, Root cause, Options, Best solution, and Evaluation
+
+#### Scenario: RFC and ADR responsibilities are separated
+- **WHEN** a new document is proposed for a feature proposal
+- **THEN** it SHALL be written as an RFC under `doc/rfc/`
+- **AND** architectural decisions SHALL be recorded as ADRs under `doc/adr/`
+
+#### Scenario: RFC-001 is exempt
+- **WHEN** the RFC format is evaluated
+- **THEN** `doc/rfc/RFC-001 Sprite Collision Hitbox Margins.md` SHALL be exempt from the PROBE requirement and SHALL remain unchanged
+
 ### Requirement: Consult capability specs for project requirements
 The system SHALL consult `openspec/specs/` for capability specifications and project requirements.
 
