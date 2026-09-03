@@ -67,7 +67,7 @@ Project specifications, requirements, and architectural decisions are maintained
 
 ### ❤️ SUPPORT THE PROJECT!
 
-Support us on Patreon, Catarse.me, PayPal or Brazilian PIX, so we can buy new resources (ex: msx related hardware) to help us to speed up in coding new functionalities and test bug fixes.
+Support us on Patreon, Catarse.me, PayPal or Brazilian PIX, so we can buy [AI coding agent token credits](https://api-docs.deepseek.com/quick_start/pricing/) and new resources (ex: msx related hardware) to help us to speed up in coding new functionalities and test bug fixes.
 
 See the [Support](https://github.com/amaurycarvalho/msxbas2rom/wiki#%EF%B8%8F-support-the-project) project wiki page for more information.
 
