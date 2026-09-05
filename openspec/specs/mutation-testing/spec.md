@@ -17,12 +17,18 @@ The system SHALL achieve a mutation score of at least 85% across all mutated sou
 
 ### Requirement: Mutation run timeout is proportionate to test duration
 
-The Mull run SHALL use a per-mutant timeout of 10 seconds (10000 ms) for both `--timeout` and `--minimum-timeout`, because the full unit suite completes in approximately 15 seconds and the slowest single test case is under 2 seconds.
+The Mull run SHALL use a timeout of 30 seconds (30000 ms) for both `--timeout` and `--minimum-timeout`, so that the warm-up (baseline) run of the whole doctest suite — which takes roughly 10–15 seconds — completes within the per-run timeout. Because Mull executes the entire test binary on each run, `--timeout` is a per-run cap and SHALL stay above the full-suite wall time; per-mutant hangs are then bounded by Mull's effective timeout `max(baseline*10, minimum-timeout)`.
 
-#### Scenario: Hanging mutants are flagged within 10 seconds
+#### Scenario: Baseline warm-up run completes
+- **WHEN** `make mutation-run` starts and performs its warm-up run of the full doctest suite
+- **THEN** the warm-up run SHALL complete without being killed as timed out
+- **AND** the mutation run SHALL proceed to mutant execution
+
+#### Scenario: Hanging mutants are bounded and flagged
 - **WHEN** a mutant causes an infinite loop during mutation testing
-- **THEN** the mutant SHALL be reported with status "Timeout" within 10 seconds
-- **THEN** the mutation run SHALL NOT wait 60 seconds for a single hanging mutant
+- **THEN** the mutant SHALL be reported with status "Timeout" instead of running indefinitely
+- **AND** the mutation run SHALL NOT wait on a single hanging mutant for more than the effective per-mutant timeout (`max(baseline*10, 30000)`)
+- **AND** a per-run cap below the full-suite duration SHALL NOT be used, because it aborts the warm-up run before any mutant is executed
 
 ### Requirement: Function strategies exercise every result subtype
 
