@@ -5,6 +5,8 @@
 
 // NOLINTBEGIN
 
+#include <cstring>
+
 #include "build_options_setup.h"
 #include "doctest/doctest.h"
 
@@ -113,6 +115,43 @@ TEST_SUITE("Options") {
     CHECK(opts.compileMode == BuildOptions::CompileMode::ASCII8);
     CHECK(opts.megaROM == true);
     CHECK(opts.outputFilename.find("[ASCII8].rom") != std::string::npos);
+  }
+
+  TEST_CASE("Accepts dash-prefixed filename after double dash") {
+    BuildOptionsSetup opts;
+    char arg0[] = "msxbas2rom";
+    char arg1[] = "--";
+    char arg2[] = "-weird.bas";
+    char* argv[] = {arg0, arg1, arg2};
+
+    REQUIRE(opts.parse(3, argv) == true);
+    CHECK(opts.error == false);
+    CHECK(opts.inputFilename.find("-weird.bas") != std::string::npos);
+  }
+
+  TEST_CASE("Rejects unknown option flags") {
+    BuildOptionsSetup opts;
+    char arg0[] = "msxbas2rom";
+    char arg1[] = "-q";
+    char arg2[] = "-z";
+    char arg3[] = "f.bas";
+    char* argv[] = {arg0, arg1, arg2, arg3};
+
+    CHECK(opts.parse(4, argv) == false);
+    CHECK(opts.error == true);
+    CHECK(opts.errorMessage.find("Unexpected argument") != std::string::npos);
+  }
+
+  TEST_CASE("Rejects a second filename argument") {
+    BuildOptionsSetup opts;
+    char arg0[] = "msxbas2rom";
+    char arg1[] = "f.bas";
+    char arg2[] = "g.bas";
+    char* argv[] = {arg0, arg1, arg2};
+
+    CHECK(opts.parse(3, argv) == false);
+    CHECK(opts.error == true);
+    CHECK(opts.errorMessage.find("Unexpected argument") != std::string::npos);
   }
 }
 

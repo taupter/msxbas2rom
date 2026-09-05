@@ -14,6 +14,7 @@
 // NOLINTBEGIN
 
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <vector>
@@ -97,6 +98,39 @@ TEST_SUITE("ResourceManager suite") {
       deleteTempFile(fname);
     }
   }
+
+  TEST_CASE("ResourceManager: resource exactly fills a 16K page") {
+    std::string fname = "tmp/temp_exact16k.bin";
+    std::string fakeData(0x4000, '\xBB');
+    createTempFile(fname, fakeData);
+
+    resourceManager.clear();
+    resourceManager.addFile(fname, "./tmp");
+    REQUIRE(resourceManager.resources.size() == 1);
+    CHECK(resourceManager.buildMap(0, 0) == true);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceManager: multiple resources span pages") {
+    std::string fname = "tmp/temp_page1.bin";
+    std::string bigData(0x3000, '\xCC');
+    std::string smallData(0x2000, '\xDD');
+    createTempFile(fname, bigData);
+
+    resourceManager.clear();
+    resourceManager.addFile(fname, "./tmp");
+    resourceManager.addFile(fname, "./tmp");
+    REQUIRE(resourceManager.resources.size() == 2);
+    CHECK(resourceManager.buildMap(0, 0) == true);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceManager: empty resource list builds successfully") {
+    resourceManager.clear();
+    CHECK(resourceManager.buildMap(0, 0) == true);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -115,6 +149,60 @@ TEST_SUITE("ResourceReader suite") {
     CHECK_VALID_READER(reader);
     REQUIRE(reader.data.size() == 1);
     CHECK(reader.data[0].size() == 0x8004);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceBlobReader rejects an empty file") {
+    std::string fname = "tmp/temp_empty_blob.bin";
+    createTempFile(fname, "");
+
+    ResourceBlobReader reader(fname);
+    CHECK(reader.load() == false);
+    CHECK(reader.getLogger()->errors().toString().find("empty") !=
+          std::string::npos);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceBlobReader preserves exact file bytes") {
+    std::string fname = "tmp/temp_bytes.bin";
+    std::string content("\x00\x01\x02\xFE\xFFGAME", 7);
+    createTempFile(fname, content);
+
+    ResourceBlobReader reader(fname);
+    CHECK_VALID_READER(reader);
+    REQUIRE(reader.data.size() == 1);
+    REQUIRE(reader.data[0].size() == 7);
+    CHECK(memcmp(reader.data[0].data(), content.data(), 7) == 0);
+
+    deleteTempFile(fname);
+  }
+
+  // ------------------------------------------------------------------
+  // ResourceBlobPackedReader
+  TEST_CASE("ResourceBlobPackedReader packs data at the 8K boundary") {
+    std::string fname = "tmp/temp_blobpacked8k.bin";
+    std::string content(0x2000, '\xAB');
+    createTempFile(fname, content);
+
+    ResourceBlobPackedReader reader(fname);
+    CHECK(reader.load() == true);
+    CHECK(reader.isPacked == true);
+    CHECK(reader.packedSize > 0);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceBlobPackedReader rejects data over the 8K boundary") {
+    std::string fname = "tmp/temp_blobpacked_over.bin";
+    std::string content(0x2001, '\xAB');
+    createTempFile(fname, content);
+
+    ResourceBlobPackedReader reader(fname);
+    CHECK(reader.load() == false);
+    CHECK(reader.getLogger()->errors().toString().find("Resource size >") !=
+          std::string::npos);
 
     deleteTempFile(fname);
   }
@@ -185,6 +273,64 @@ TEST_SUITE("ResourceReader suite") {
     deleteTempFile(fname);
   }
 
+  TEST_CASE("ResourceTxtReader truncates long lines to 255 characters") {
+    std::string fname = "tmp/temp_long.txt";
+    std::string longLine(300, 'x');
+    createTempFile(fname, longLine);
+
+    ResourceTxtReader reader(fname);
+    CHECK(reader.load() == true);
+    REQUIRE(reader.data.size() == 2);
+    CHECK(reader.data[1][0] == 255);
+    CHECK(reader.data[1].size() == 256);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceTxtReader replaces control characters with spaces") {
+    std::string fname = "tmp/temp_ctrl.txt";
+    std::string text = "ab\x01"
+                       "cd\x07"
+                       "ef";
+    createTempFile(fname, text);
+
+    ResourceTxtReader reader(fname);
+    CHECK(reader.load() == true);
+    REQUIRE(reader.data.size() == 2);
+    REQUIRE(reader.data[1].size() >= 7);
+    const unsigned char* line = reader.data[1].data();
+    CHECK(line[3] == ' ');
+    CHECK(line[6] == ' ');
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceTxtReader strips CRLF at end of lines") {
+    std::string fname = "tmp/temp_crlf.txt";
+    createTempFile(fname, "hello\r\nworld\r\n");
+
+    ResourceTxtReader reader(fname);
+    CHECK(reader.load() == true);
+    REQUIRE(reader.data.size() == 3);
+    CHECK(reader.data[1][0] == 5);
+    CHECK(reader.data[2][0] == 5);
+
+    deleteTempFile(fname);
+  }
+
+  // ------------------------------------------------------------------
+  // ResourceStringReader
+  TEST_CASE("ResourceStringReader truncates at 255 characters") {
+    std::string text(300, 'y');
+    ResourceStringReader reader(text);
+
+    CHECK(reader.load() == true);
+    REQUIRE(reader.data.size() == 1);
+    CHECK(reader.data[0].size() == 256);
+    CHECK(reader.data[0][255] == 0);
+    CHECK(reader.unpackedSize == 256);
+  }
+
   // ------------------------------------------------------------------
   // ResourceCsvReader
   TEST_CASE("ResourceCsvReader parses CSV data") {
@@ -245,6 +391,31 @@ TEST_SUITE("ResourceReader suite") {
     CHECK_VALID_READER(reader);
     CHECK(reader.unpackedSize == 101);
     CHECK(reader.packedSize == 51);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceSprReader produces identical bytes across loads") {
+    std::string fname = "tmp/temp_spr_exact.spr";
+    std::string content = "!type\nmsx1\n#Slot 0\n";
+    for (int i = 0; i < 16; i++) {
+      content += "FFFFFFFFFFFFFFFF\n";
+    }
+    createTempFile(fname, content);
+
+    ResourceSprReader reader1(fname);
+    ResourceSprReader reader2(fname);
+    REQUIRE(reader1.load() == true);
+    REQUIRE(reader2.load() == true);
+
+    REQUIRE(reader1.data.size() == reader2.data.size());
+    CHECK(reader1.data.size() > 0);
+    for (size_t i = 0; i < reader1.data.size(); i++) {
+      CHECK(reader1.data[i] == reader2.data[i]);
+    }
+    CHECK(reader1.packedSize == reader2.packedSize);
+    CHECK(reader1.unpackedSize == reader2.unpackedSize);
+    CHECK(reader1.unpackedSize > 0);
 
     deleteTempFile(fname);
   }

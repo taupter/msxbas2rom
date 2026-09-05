@@ -6,6 +6,7 @@
 // NOLINTBEGIN
 
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -115,6 +116,22 @@ TEST_SUITE("ResourceReadersExtra") {
     deleteTempFile(fname);
   }
 
+  TEST_CASE("ResourceAkmReader produces identical bytes across loads") {
+    std::string fname = "../../tests/integration/ARKTRK/songs.akm";
+
+    ResourceAkmReader reader1(fname);
+    ResourceAkmReader reader2(fname);
+    REQUIRE(reader1.load() == true);
+    REQUIRE(reader2.load() == true);
+
+    REQUIRE(reader1.data.size() == reader2.data.size());
+    for (size_t i = 0; i < reader1.data.size(); i++) {
+      CHECK(reader1.data[i] == reader2.data[i]);
+    }
+    CHECK(reader1.packedSize == reader2.packedSize);
+    CHECK(reader1.unpackedSize == reader2.unpackedSize);
+  }
+
   TEST_CASE("ResourceAkxReader loads real AKX effects") {
     std::string fname = "../../tests/integration/ARKTRK/effects.akx";
 
@@ -137,6 +154,22 @@ TEST_SUITE("ResourceReadersExtra") {
       CHECK(ResourceAkxReader::isIt(".akx") == true);
       CHECK(ResourceAkxReader::isIt(".dat") == false);
     }
+  }
+
+  TEST_CASE("ResourceAkxReader produces identical bytes across loads") {
+    std::string fname = "../../tests/integration/ARKTRK/effects.akx";
+
+    ResourceAkxReader reader1(fname);
+    ResourceAkxReader reader2(fname);
+    REQUIRE(reader1.load() == true);
+    REQUIRE(reader2.load() == true);
+
+    REQUIRE(reader1.data.size() == reader2.data.size());
+    for (size_t i = 0; i < reader1.data.size(); i++) {
+      CHECK(reader1.data[i] == reader2.data[i]);
+    }
+    CHECK(reader1.packedSize == reader2.packedSize);
+    CHECK(reader1.unpackedSize == reader2.unpackedSize);
   }
 
   TEST_CASE("ResourceMtfMapReader loads a minimal map") {
@@ -193,6 +226,69 @@ TEST_SUITE("ResourceReadersExtra") {
     CHECK(ResourceMtfMapReader::isIt(".MTF") == false);
   }
 
+  TEST_CASE("ResourceMtfMapReader produces byte-exact map output") {
+    std::string superName = "tmp/temp_golden.SC4Super";
+    std::string mapName = "tmp/temp_golden.SC4Map";
+
+    // supertile: count=1, width=1, height=1, limit=1, reserved, one tile (idx 1)
+    std::string supertile =
+        std::string("\x01\x01\x01\x01\x00\x00\x00\x01", 8);
+    // tilemap: width=1, height=2, reserved(4), two supertile indices (both 0)
+    std::string tilemap = std::string(
+        "\x01\x00\x02\x00\x00\x00\x00\x00\x00\x00", 10);
+    createTempFile(superName, supertile);
+    createTempFile(mapName, tilemap);
+
+    ResourceMtfMapReader reader(mapName);
+    REQUIRE(reader.load() == true);
+    REQUIRE(reader.data.size() == 3);
+
+    // Header block: type(1) + width(2) + height(2) + line table (2 lines * 3)
+    REQUIRE(reader.data[0].size() == 11);
+    CHECK(reader.data[0][0] == 2);        // map resource type
+    CHECK(reader.data[0][1] == 1);        // resource width (1)
+    CHECK(reader.data[0][2] == 0);
+    CHECK(reader.data[0][3] == 2);        // resource height (2)
+    CHECK(reader.data[0][4] == 0);
+    for (size_t i = 5; i < 11; i++) CHECK(reader.data[0][i] == 0);
+
+    // Each line block: 3-byte link header + 1 tile + 31 mirrored tiles.
+    REQUIRE(reader.data[1].size() == 35);
+    REQUIRE(reader.data[2].size() == 35);
+    CHECK(reader.data[1][0] == 0);
+    CHECK(reader.data[1][1] == 0);
+    CHECK(reader.data[1][2] == 0);
+    for (int i = 3; i < 35; i++) CHECK(reader.data[1][i] == 1);
+    CHECK(reader.data[2][0] == 0);
+    CHECK(reader.data[2][1] == 0);
+    CHECK(reader.data[2][2] == 0);
+    for (int i = 3; i < 35; i++) CHECK(reader.data[2][i] == 1);
+
+    // Remap first line to segment 2 @ 0x8000.
+    CHECK(reader.remapTo(1, 2, 0x8000) == true);
+    CHECK(reader.data[0][5] == 2);
+    CHECK(reader.data[0][6] == 0x00);
+    CHECK(reader.data[0][7] == 0x80);
+    CHECK(reader.data[1][0] == 2);
+    CHECK(reader.data[1][1] == 0x00);
+    CHECK(reader.data[1][2] == 0x80);
+
+    // Remap second line to segment 3 @ 0x9000; it links back to the first line.
+    CHECK(reader.remapTo(2, 3, 0x9000) == true);
+    CHECK(reader.data[0][8] == 3);
+    CHECK(reader.data[0][9] == 0x00);
+    CHECK(reader.data[0][10] == 0x90);
+    CHECK(reader.data[1][0] == 3);        // first line -> next is second line
+    CHECK(reader.data[1][1] == 0x00);
+    CHECK(reader.data[1][2] == 0x90);
+    CHECK(reader.data[2][0] == 2);        // second line wraps to the first line
+    CHECK(reader.data[2][1] == 0x00);
+    CHECK(reader.data[2][2] == 0x80);
+
+    deleteTempFile(superName);
+    deleteTempFile(mapName);
+  }
+
   TEST_CASE("ResourceMtfReader reports not implemented") {
     std::string fname = "tmp/temp_notimpl.mtf";
     createTempFile(fname, "MTF");
@@ -243,6 +339,26 @@ TEST_SUITE("ResourceReadersExtra") {
     ResourceCsvReader reader(fname);
     CHECK(reader.load() == true);
     CHECK(reader.unpackedSize > 0);
+
+    deleteTempFile(fname);
+  }
+
+  TEST_CASE("ResourceCsvReader converts lowercase radix prefixes") {
+    std::string fname = "tmp/temp_lowradix.csv";
+    std::string csv = "1,&h0f,&o17,&b11,255\n";
+    createTempFile(fname, csv);
+
+    ResourceCsvReader reader(fname);
+    CHECK(reader.load() == true);
+    REQUIRE(reader.data.size() >= 5);
+
+    const char* expected[] = {"1", "15", "15", "3", "255"};
+    for (size_t i = 1; i < 6; i++) {
+      CHECK(reader.data[i][0] == strlen(expected[i - 1]));
+      std::string field(reinterpret_cast<char*>(reader.data[i].data()) + 1,
+                        reader.data[i][0]);
+      CHECK(field == expected[i - 1]);
+    }
 
     deleteTempFile(fname);
   }

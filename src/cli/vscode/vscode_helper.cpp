@@ -56,8 +56,8 @@ string VSCodeHelper::getEmulatorAppFilename() {
   return emulatorAppFilename;
 }
 
-bool VSCodeHelper::initialize() {
-  string pathName = ".vscode";
+bool VSCodeHelper::initializeInto(string path) {
+  string pathName = pathJoin(path, ".vscode");
   string launchName = pathJoin(pathName, "launch.json");
   string tasksName = pathJoin(pathName, "tasks.json");
   string debugName = pathJoin(pathName, "debug.tcl");
@@ -70,6 +70,10 @@ bool VSCodeHelper::initialize() {
   }
 
   return false;
+}
+
+bool VSCodeHelper::initialize() {
+  return initializeInto(".");
 }
 
 string VSCodeHelper::launchContent =

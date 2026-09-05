@@ -263,9 +263,9 @@ mutation-run:
 		--reporters Elements \
 		--report-dir "$(CURDIR)" \
 		--report-name $(MUTATION_REPORT_NAME) \
-		--timeout 60000 \
-		--minimum-timeout 60000 \
-		--mutation-score-threshold 80 \
+		--timeout 10000 \
+		--minimum-timeout 10000 \
+		--mutation-score-threshold 85 \
 		--allow-surviving \
 		--no-test-output \
 		"$(abspath $(MUTATION_OUT))"

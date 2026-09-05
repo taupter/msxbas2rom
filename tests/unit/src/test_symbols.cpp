@@ -122,6 +122,70 @@ TEST_SUITE("Symbols") {
     CHECK(factory.getBySymbolMode(BuildOptions::SymbolsMode::None) == NULL);
   }
 
+  TEST_CASE("Symbol exports include array data descriptors") {
+    ensureTmpDir();
+
+    SymbolManager manager;
+    shared_ptr<Lexeme> arrLex = make_shared<Lexeme>();
+    arrLex->subtype = Lexeme::subtype_numeric;
+    arrLex->isArray = true;
+    arrLex->x_size = 3;
+    arrLex->y_size = 2;
+
+    shared_ptr<CodeNode> arrData = make_shared<CodeNode>();
+    arrData->name = "ARRVAR";
+    arrData->start = 0;
+    arrData->length = 12;
+    arrData->segm = 0;
+    arrData->addr_within_segm = 0x5000;
+    arrData->is_code = false;
+    arrData->debug = true;
+    arrData->lexeme = arrLex;
+    manager.context->dataList.push_back(arrData);
+
+    BuildOptions::SymbolsMode modes[] = {
+        BuildOptions::SymbolsMode::Symbol, BuildOptions::SymbolsMode::Omds,
+        BuildOptions::SymbolsMode::NoICE,  BuildOptions::SymbolsMode::Cdb,
+        BuildOptions::SymbolsMode::Elf};
+    for (BuildOptions::SymbolsMode mode : modes) {
+      shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+      opts->setInputFilename("tmp/symbols_test.bas");
+      opts->symbols = mode;
+
+      REQUIRE(manager.saveSymbol(opts) == true);
+      std::string content =
+          readFileText(manager.context->exportFilename);
+      CHECK(content.find("ARRVAR") != std::string::npos);
+      std::remove(manager.context->exportFilename.c_str());
+    }
+  }
+
+  TEST_CASE("Symbol exports with data node without lexeme") {
+    ensureTmpDir();
+
+    SymbolManager manager;
+    shared_ptr<CodeNode> rawData = make_shared<CodeNode>();
+    rawData->name = "RAWVAR";
+    rawData->start = 0;
+    rawData->length = 4;
+    rawData->segm = 0;
+    rawData->addr_within_segm = 0x6000;
+    rawData->is_code = false;
+    rawData->debug = true;
+    rawData->lexeme = NULL;
+    manager.context->dataList.push_back(rawData);
+
+    shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+    opts->setInputFilename("tmp/symbols_test.bas");
+    opts->symbols = BuildOptions::SymbolsMode::Cdb;
+
+    REQUIRE(manager.saveSymbol(opts) == true);
+    std::string content = readFileText(manager.context->exportFilename);
+    CHECK(content.find("RAWVAR") != std::string::npos);
+
+    std::remove(manager.context->exportFilename.c_str());
+  }
+
   TEST_CASE("Symbol manager saves .symbol file") {
     ensureTmpDir();
     SymbolsFixture fixture;

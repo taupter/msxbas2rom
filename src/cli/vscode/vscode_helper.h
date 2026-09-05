@@ -28,6 +28,8 @@ class VSCodeHelper {
   string getCompilerAppFilename();
   string getEmulatorAppFilename();
 
+  bool initializeInto(string path);
+
   bool initialize();
 
   explicit VSCodeHelper(string compilerAppFilename);

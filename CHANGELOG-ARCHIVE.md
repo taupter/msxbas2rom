@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with a MAJOR.MINOR.PATCH.BUILD scheme.
 
+## [1.2.2.0] - 2026-08-12
+
+### [2026-08-12-fix-make-lint-warnings](openspec/changes/archive/2026-08-12-fix-make-lint-warnings) Fix `make lint` gate failures and indeterminate `Logger::LogEntry` fields
+
+#### Fixed
+- `src/infrastructure/logging/logger.h` / `logger.cpp`: give `LogEntry` explicit default and `(LogLevel, const string&)` constructors so all six fields are deterministically initialized, eliminating the `-Wmissing-field-initializers` errors and the indeterminate-`dummy` bug
+
+#### Changed
+- `src/application/compiler/helpers/semantic/compiler_code_helper.h` / `.cpp`: change `addBasicChar(char)` to `addBasicChar(unsigned char)`, matching its actual semantics (raw byte emission into `addLdiHL(unsigned char)`) and removing the `-Woverflow` errors on `0xC0`/`0xC5` MSX-BASIC tokens
+
+#### Removed
+- `src/application/compiler/helpers/semantic/compiler_code_optimizer.cpp`: drop the always-true `address >= def_wrapper_routines_map_table` lower-bound comparison in `getKernelCallAddr()` (the table base is `0x0000`, and the outer guard already ensures `address < 0x4000`), removing the `-Wtype-limits` error
+
 ## [1.2.1.0] - 2026-06-29
 
 ### [2026-06-29-fix-windows-startup-unicode-argv](openspec/changes/archive/2026-06-29-fix-windows-startup-unicode-argv) Fix Windows startup Unicode argv to ensure CLI runs reliably
@@ -1081,6 +1094,7 @@ with a MAJOR.MINOR.PATCH.BUILD scheme.
 
 See main [CHANGELOG](CHANGELOG.md) for newer releases.
 
+[1.2.2.0]: https://github.com/amaurycarvalho/msxbas2rom/releases/tag/v1.2.2.0
 [1.2.1.0]: https://github.com/amaurycarvalho/msxbas2rom/releases/tag/v1.2.1.0
 [1.2.0.0]: https://github.com/amaurycarvalho/msxbas2rom/releases/tag/v1.2.0.0
 [1.1.0.0]: https://github.com/amaurycarvalho/msxbas2rom/releases/tag/v1.1.0.0

@@ -53,7 +53,83 @@ static bool compileStatementProgram(const std::string& filename,
   return ok;
 }
 
+static int compiledCodeSize(const std::string& filename,
+                            const std::string& program) {
+  const std::string path = createTempBas(filename, program);
+
+  shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter = make_shared<Z80OpcodeWriter>();
+  shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+  shared_ptr<Lexer> lexer = make_shared<Lexer>();
+  shared_ptr<Parser> parser = make_shared<Parser>();
+
+  bool ok = false;
+  if (lexer->load(path) && lexer->evaluate() && parser->evaluate(lexer)) {
+    ok = compiler->build(parser);
+  }
+
+  std::remove(path.c_str());
+
+  return ok ? compiler->getCodeSize() : -1;
+}
+
 TEST_SUITE("CompilerSetStatementStrategy") {
+  TEST_CASE("SET SCROLL null and full argument forms compile") {
+    int plain = compiledCodeSize("set_a.bas", "10 SET SCROLL 1,2,3,4\n20 END\n");
+    int null0 = compiledCodeSize("set_b.bas", "10 SET SCROLL ,2,3,4\n20 END\n");
+    int null1 = compiledCodeSize("set_c.bas", "10 SET SCROLL 1,,3,4\n20 END\n");
+    CHECK(plain > 0);
+    CHECK(null0 > 0);
+    CHECK(null1 > 0);
+  }
+
+  TEST_CASE("SET SCROLL truncated and boundary counts compile") {
+    int t1 = compiledCodeSize("set_d.bas", "10 SET SCROLL 1\n20 END\n");
+    int t2 = compiledCodeSize("set_e.bas", "10 SET SCROLL 1,2\n20 END\n");
+    int t3 = compiledCodeSize("set_f.bas", "10 SET SCROLL 1,2,3\n20 END\n");
+    int t4 = compiledCodeSize("set_g.bas", "10 SET SCROLL 1,2,3,4\n20 END\n");
+    CHECK(t1 > 0);
+    CHECK(t2 > 0);
+    CHECK(t3 > 0);
+    CHECK(t4 > 0);
+    CHECK(t1 != t2);
+    CHECK(t2 != t3);
+    CHECK(t3 != t4);
+  }
+
+  TEST_CASE("SET TILE COLOR buffer and tuple forms compile") {
+    int buffer = compiledCodeSize(
+        "set_h.bas", "10 DIM PB%(7)\n20 SET TILE COLOR 5, PB%()\n30 END\n");
+    int tuple = compiledCodeSize(
+        "set_i.bas", "10 SET TILE COLOR 5, (1,2,3,4)\n20 END\n");
+    int tuple2 = compiledCodeSize(
+        "set_j.bas", "10 SET TILE COLOR 5, (1,2,3,4), (5,6,7,8)\n20 END\n");
+    CHECK(buffer > 0);
+    CHECK(tuple > 0);
+    CHECK(tuple2 > 0);
+    CHECK(buffer != tuple);
+    CHECK(tuple != tuple2);
+  }
+
+  TEST_CASE("SET TILE PATTERN null tuple emits defaults") {
+    int plain = compiledCodeSize(
+        "set_k.bas", "10 SET TILE PATTERN 65, (255,0,255,0,255,0,255,0)\n20 END\n");
+    int with_bank = compiledCodeSize(
+        "set_l.bas", "10 SET TILE PATTERN 65, (255,0,255,0,255,0,255,0), 1\n20 END\n");
+    CHECK(plain > 0);
+    CHECK(with_bank > 0);
+    CHECK(plain != with_bank);
+  }
+
+  TEST_CASE("SET SCROLL with empty parameters is rejected") {
+    std::string errors;
+    bool ok =
+        compileStatementProgram("set_err_empty.bas", "10 SET SCROLL\n20 END\n",
+                                &errors);
+    CHECK(ok == false);
+    CHECK(errors.find("SET SCROLL") != std::string::npos);
+  }
+
+
   TEST_CASE("SET sub-commands compile successfully") {
     struct SetCase {
       const char* name;

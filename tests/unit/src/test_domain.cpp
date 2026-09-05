@@ -11,6 +11,7 @@
 #include "build_options.h"
 #include "doctest/doctest.h"
 #include "lexeme.h"
+#include "lexer_line_context.h"
 #include "tag_node.h"
 
 TEST_SUITE("Domain") {
@@ -88,6 +89,68 @@ TEST_SUITE("Domain") {
     std::string tagText = tag.toString();
 
     CHECK(tagText.find("Tag 10") != std::string::npos);
+  }
+
+  TEST_CASE("LexerLineContext toString appends newline when missing") {
+    LexerLineContext line;
+    line.lineText = "10 PRINT";
+    line.addLexeme(make_shared<Lexeme>(Lexeme::type_literal,
+                                       Lexeme::subtype_numeric, "10"));
+    std::string text = line.toString();
+    CHECK(text.find("10 PRINT\n") != std::string::npos);
+    CHECK(text.find("Literal") != std::string::npos);
+  }
+
+  TEST_CASE("LexerLineContext toString keeps existing line break") {
+    LexerLineContext line;
+    line.lineText = "10 PRINT\n";
+    line.clearLexemes();
+    std::string text = line.toString();
+    CHECK(text.find("10 PRINT\n") != std::string::npos);
+
+    LexerLineContext crLine;
+    crLine.lineText = "10 PRINT\r";
+    crLine.clearLexemes();
+    std::string crText = crLine.toString();
+    CHECK(crText.find("10 PRINT\r") != std::string::npos);
+  }
+
+  TEST_CASE("TagNode toString includes lexer line text") {
+    LexerLineContext line;
+    line.lineText = "10 PRINT 1";
+
+    TagNode tag;
+    tag.name = "10";
+    tag.value = "10";
+    tag.lexerLine = make_shared<LexerLineContext>(line);
+
+    std::string tagText = tag.toString();
+    CHECK(tagText.find("10 PRINT 1") != std::string::npos);
+    CHECK(tagText.find("Tag 10") != std::string::npos);
+  }
+
+  TEST_CASE("Lexeme toString honours indent override") {
+    Lexeme lex(Lexeme::type_literal, Lexeme::subtype_numeric, "10", "10");
+    lex.indent = 5;
+    std::string defaultText = lex.toString();
+    CHECK(defaultText.find("     -->") != std::string::npos);
+
+    std::string overridden = lex.toString(1);
+    CHECK(overridden.find(" -->") != std::string::npos);
+  }
+
+  TEST_CASE("Lexeme isKeyword/isSeparator/isOperator compare by type") {
+    Lexeme kw(Lexeme::type_keyword, Lexeme::subtype_any, "PRINT");
+    CHECK(kw.isKeyword("PRINT") == true);
+    CHECK(kw.isKeyword("GOTO") == false);
+
+    Lexeme sep(Lexeme::type_separator, Lexeme::subtype_any, ",");
+    CHECK(sep.isSeparator(",") == true);
+    CHECK(sep.isSeparator(";") == false);
+
+    Lexeme op(Lexeme::type_operator, Lexeme::subtype_any, "+");
+    CHECK(op.isOperator("+") == true);
+    CHECK(op.isOperator("-") == false);
   }
 }
 

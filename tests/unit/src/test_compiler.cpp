@@ -290,6 +290,67 @@ TEST_SUITE("Compiler") {
     std::remove(filename.c_str());
   }
 
+  TEST_CASE("Writes MegaROM code that crosses exactly at a 16K page boundary") {
+    std::string content;
+    int line = 1;
+    for (int i = 1; i < 230; i++) {
+      content += std::to_string(line++) + " A=" + std::to_string(i) + "\n";
+      content += std::to_string(line++) + " B=A+" + std::to_string(i) + "\n";
+      content += std::to_string(line++) + " C=A*B\n";
+      content += std::to_string(line++) + " PRINT C\n";
+    }
+    content += std::to_string(line) + " END\n";
+
+    const std::string filename =
+        createTempBas("compiler_write_boundary.bas", content);
+
+    shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+    opts->compileMode = BuildOptions::CompileMode::Konami4;
+    opts->megaROM = true;
+    shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter =
+        make_shared<Z80OpcodeWriter>();
+    shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+    REQUIRE(compileWithOpts(filename, compiler, opts) == true);
+
+    int codeSize = compiler->getCodeSize();
+    CHECK(codeSize > 0x4000);
+
+    std::vector<unsigned char> out(0x20000, 0);
+    int written = compiler->write(out.data(), 0x8000);
+    CHECK(written >= codeSize);
+
+    // The segment-skip trampoline emitted when code crosses a 16K boundary:
+    //   ld a, <segment>; ld hl, 0x8000; jp MR_JUMP  -> 3E xx 21 00 80 C3 yy zz
+    const unsigned char sig0 = 0x3E, sig2 = 0x21, sig3 = 0x00, sig4 = 0x80,
+                        sig5 = 0xC3;
+    int trampoline = -1;
+    for (int i = 0; i + 8 <= 0x4000 && i < written; i++) {
+      if (out[i] == sig0 && out[i + 2] == sig2 && out[i + 3] == sig3 &&
+          out[i + 4] == sig4 && out[i + 5] == sig5) {
+        trampoline = i;
+        break;
+      }
+    }
+    CHECK(trampoline >= 0);
+    if (trampoline >= 0) {
+      // The page is zero-padded from the trampoline up to the 0x4000 mark.
+      for (int i = trampoline + 8; i < 0x4000; i++) {
+        CHECK(out[i] == 0);
+      }
+      // The crossed code resumes exactly after the 16K boundary.
+      bool hasCode = false;
+      for (int i = 0x4000; i < 0x4000 + 64 && i < written; i++) {
+        if (out[i] != 0) {
+          hasCode = true;
+          break;
+        }
+      }
+      CHECK(hasCode == true);
+    }
+
+    std::remove(filename.c_str());
+  }
+
   TEST_CASE("Fails when compiled code exceeds maximum ROM limit") {
     const std::string content =
         "10 FOR I=1 TO 100\n20 A=I\n30 NEXT I\n40 FOR I=1 TO 100\n"
@@ -1129,6 +1190,59 @@ TEST_SUITE("CompilerStatementStrategies") {
       CHECK(errors.size() > 0);
     }
   }
+
+  TEST_CASE("I/O statements accept single and multi parameter forms") {
+    struct IoCase {
+      const char* name;
+      const char* program;
+      bool expect_success;
+    };
+
+    const IoCase cases[] = {
+        {"OUT_SINGLE", "10 OUT 1\n20 END\n", false},
+        {"OUT_DOUBLE", "10 OUT 1,2\n20 END\n", true},
+        {"OUT_TRIPLE", "10 OUT 1,2,3\n20 END\n", false},
+        {"POKE_SINGLE", "10 POKE 1\n20 END\n", false},
+        {"POKE_DOUBLE", "10 POKE 1,2\n20 END\n", true},
+        {"VPOKE_SINGLE", "10 VPOKE 1\n20 END\n", false},
+        {"VPOKE_DOUBLE", "10 VPOKE 1,2\n20 END\n", true},
+        {"IPOKE_SINGLE", "10 IPOKE 1\n20 END\n", false},
+        {"IPOKE_DOUBLE", "10 IPOKE 1,2\n20 END\n", true},
+        {"WAIT_SINGLE", "10 WAIT 1\n20 END\n", false},
+        {"WAIT_DOUBLE", "10 WAIT 1,2\n20 END\n", true},
+        {"WAIT_TRIPLE", "10 WAIT 1,2,3\n20 END\n", true},
+        {"SOUND_SINGLE", "10 SOUND 1\n20 END\n", false},
+        {"SOUND_DOUBLE", "10 SOUND 1,2\n20 END\n", true},
+        {"SOUND_TRIPLE", "10 SOUND 1,2,3\n20 END\n", false},
+        {"READ_SINGLE", "10 DATA 1\n20 READ A\n30 END\n", true},
+        {"READ_MULTI", "10 DATA 1,2\n20 READ A,B\n30 END\n", true},
+        {"IREAD_SINGLE", "10 IDATA 1\n20 IREAD A\n30 END\n", true},
+        {"IREAD_MULTI", "10 IDATA 1,2\n20 IREAD A,B\n30 END\n", true},
+        {"CLOSE_NAKED", "10 CLOSE\n20 END\n", true},
+        {"CLOSE_MULTI", "10 CLOSE #1,#2\n20 END\n", false},
+        {"SWAP_STRING", "10 A$=\"1\"\n20 B$=\"2\"\n30 SWAP A$,B$\n40 END\n", true},
+    };
+
+    for (const auto& test_case : cases) {
+      SUBCASE(test_case.name) {
+        std::string errors;
+        bool ok = compileStatementProgram(
+            std::string("io_") + test_case.name + ".bas", test_case.program,
+            &errors);
+        CHECK(ok == test_case.expect_success);
+        if (test_case.expect_success) CHECK(errors.empty());
+      }
+    }
+  }
+
+  TEST_CASE("SWAP rejects mixing string and numeric variables") {
+    std::string errors;
+    bool ok = compileStatementProgram(
+        "io_swap_mismatch.bas", "10 A=1\n20 B$=\"2\"\n30 SWAP A,B$\n40 END\n",
+        &errors);
+    CHECK(ok == false);
+    CHECK(errors.size() > 0);
+  }
 }
 
 TEST_SUITE("CompilerCmdHandlers") {
@@ -1842,6 +1956,243 @@ TEST_SUITE("CompilerFunctionStrategies") {
             test_case.use_action_params
                 ? makeCmdAction(test_case.keyword, test_case.action_params)
                 : make_shared<ActionNode>(test_case.keyword);
+
+        int result[4] = {Lexeme::subtype_unknown, Lexeme::subtype_unknown,
+                         Lexeme::subtype_unknown, Lexeme::subtype_unknown};
+        for (size_t i = 0; i < test_case.result.size() && i < 4; i++) {
+          result[i] = test_case.result[i];
+        }
+
+        int out = strategy->execute(ctx, action, result, test_case.parmCount);
+
+        CHECK(out == test_case.expected);
+      }
+    }
+  }
+
+  TEST_CASE("Function strategies handle decimal/string argument subtypes") {
+    struct FuncSubtypeCase {
+      const char* name;
+      const char* keyword;
+      unsigned int parmCount;
+      std::vector<int> result;
+      int expected;
+    };
+
+    const FuncSubtypeCase cases[] = {
+        // Math: single/decimal float arguments reach the float subtype
+        // branches (result[0] == subtype_single_decimal || ==
+        // subtype_double_decimal).
+        {"ABS_SINGLE", "ABS", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"ABS_DOUBLE", "ABS", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"INT_SINGLE", "INT", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"INT_DOUBLE", "INT", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"SGN_SINGLE", "SGN", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"SGN_DOUBLE", "SGN", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+
+        {"ATN_SINGLE", "ATN", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"ATN_DOUBLE", "ATN", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"COS_SINGLE", "COS", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"COS_DOUBLE", "COS", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"FIX_SINGLE", "FIX", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"FIX_DOUBLE", "FIX", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"LOG_SINGLE", "LOG", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"LOG_DOUBLE", "LOG", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"RND_SINGLE", "RND", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"RND_DOUBLE", "RND", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"SQR_SINGLE", "SQR", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"SQR_DOUBLE", "SQR", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+        {"TAN_SINGLE", "TAN", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_single_decimal},
+        {"TAN_DOUBLE", "TAN", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_double_decimal},
+
+        // String functions: decimal size/char arguments reach the float cast
+        // branches.
+        {"CHR_SINGLE", "CHR$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"CHR_DOUBLE", "CHR$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"HEX_SINGLE", "HEX$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"HEX_DOUBLE", "HEX$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"OCT_SINGLE", "OCT$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"OCT_DOUBLE", "OCT$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"BIN_SINGLE", "BIN$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"BIN_DOUBLE", "BIN$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"SPACE_SINGLE", "SPACE$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"SPACE_DOUBLE", "SPACE$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"TAB_SINGLE", "TAB", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"TAB_DOUBLE", "TAB", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"LEFT_SINGLE", "LEFT$", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"LEFT_DOUBLE", "LEFT$", 2,
+         {Lexeme::subtype_double_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"RIGHT_SINGLE", "RIGHT$", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"RIGHT_DOUBLE", "RIGHT$", 2,
+         {Lexeme::subtype_double_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"MID2_SINGLE", "MID$", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"MID2_DOUBLE", "MID$", 2,
+         {Lexeme::subtype_double_decimal, Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"MID3_SINGLE_START", "MID$", 3,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_numeric,
+          Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"MID3_SINGLE_SIZE", "MID$", 3,
+         {Lexeme::subtype_numeric, Lexeme::subtype_single_decimal,
+          Lexeme::subtype_string},
+         Lexeme::subtype_string},
+        {"STRING2_SINGLE_CHAR", "STRING$", 2,
+         {Lexeme::subtype_numeric, Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"STRING2_SINGLE_SIZE", "STRING$", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_numeric},
+         Lexeme::subtype_string},
+        {"STRING2_DOUBLE_CHAR", "STRING$", 2,
+         {Lexeme::subtype_numeric, Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"STRING2_DOUBLE_SIZE", "STRING$", 2,
+         {Lexeme::subtype_double_decimal, Lexeme::subtype_numeric},
+         Lexeme::subtype_string},
+        {"INSTR3_SINGLE_START", "INSTR", 3,
+         {Lexeme::subtype_string, Lexeme::subtype_string,
+          Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"INSTR3_DOUBLE_START", "INSTR", 3,
+         {Lexeme::subtype_string, Lexeme::subtype_string,
+          Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+
+        // I/O functions: decimal port/file/register arguments reach the float
+        // cast branches.
+        {"DSKF_SINGLE", "DSKF", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"DSKF_DOUBLE", "DSKF", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"EOF_SINGLE", "EOF", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"EOF_DOUBLE", "EOF", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"FPOS_SINGLE", "FPOS", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"FPOS_DOUBLE", "FPOS", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"LOF_SINGLE", "LOF", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"LOF_DOUBLE", "LOF", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"INP_SINGLE", "INP", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"INP_DOUBLE", "INP", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"INPUT_SINGLE", "INPUT$", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_string},
+        {"INPUT_DOUBLE", "INPUT$", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_string},
+        {"PEEK_SINGLE", "PEEK", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"PEEK_DOUBLE", "PEEK", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"VPEEK_SINGLE", "VPEEK", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"VPEEK_DOUBLE", "VPEEK", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"IPEEK_SINGLE", "IPEEK", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"IPEEK_DOUBLE", "IPEEK", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"STICK_SINGLE", "STICK", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"STICK_DOUBLE", "STICK", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"STRIG_SINGLE", "STRIG", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"STRIG_DOUBLE", "STRIG", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+
+        // Graphics/basic/sound functions.
+        {"VDP1_SINGLE", "VDP", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"VDP1_DOUBLE", "VDP", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"PAD_SINGLE", "PAD", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"PAD_DOUBLE", "PAD", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"PLAY_SINGLE", "PLAY", 1, {Lexeme::subtype_single_decimal},
+         Lexeme::subtype_numeric},
+        {"PLAY_DOUBLE", "PLAY", 1, {Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"POINT_X_SINGLE", "POINT", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_numeric},
+         Lexeme::subtype_numeric},
+        {"POINT_Y_DOUBLE", "POINT", 2,
+         {Lexeme::subtype_numeric, Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+        {"TILE_X_SINGLE", "TILE", 2,
+         {Lexeme::subtype_single_decimal, Lexeme::subtype_numeric},
+         Lexeme::subtype_numeric},
+        {"TILE_Y_DOUBLE", "TILE", 2,
+         {Lexeme::subtype_numeric, Lexeme::subtype_double_decimal},
+         Lexeme::subtype_numeric},
+
+        // Zero-argument variants: POS/LPOS accept an optional dummy argument.
+        {"POS_1ARG", "POS", 1, {Lexeme::subtype_numeric},
+         Lexeme::subtype_numeric},
+        {"LPOS_1ARG", "LPOS", 1, {Lexeme::subtype_numeric},
+         Lexeme::subtype_numeric},
+    };
+
+    for (const auto& test_case : cases) {
+      SUBCASE(test_case.name) {
+        shared_ptr<CpuWorkspaceContext> workspace =
+            make_shared<CpuWorkspaceContext>(COMPILE_CODE_SIZE,
+                                             COMPILE_RAM_SIZE, def_RAM_BOTTOM);
+        shared_ptr<Z80OpcodeWriter> cpu = make_shared<Z80OpcodeWriter>();
+        shared_ptr<CompilerContext> ctx = createCmdContext(cpu, workspace);
+
+        CompilerFunctionStrategyFactory factory;
+        ICompilerFunctionStrategy* strategy =
+            factory.getByKeyword(test_case.keyword);
+        REQUIRE(strategy != nullptr);
+
+        shared_ptr<ActionNode> action =
+            make_shared<ActionNode>(test_case.keyword);
 
         int result[4] = {Lexeme::subtype_unknown, Lexeme::subtype_unknown,
                          Lexeme::subtype_unknown, Lexeme::subtype_unknown};

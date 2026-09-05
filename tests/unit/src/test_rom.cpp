@@ -336,6 +336,89 @@ TEST_SUITE("Rom") {
 
     std::remove(filename.c_str());
   }
+
+  TEST_CASE("Reports share percentages that sum to the ROM size") {
+    const std::string filename =
+        createTempBas("rom_shares.bas", "10 PRINT \"HI\"\n20 END\n");
+
+    shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+    shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter =
+        make_shared<Z80OpcodeWriter>();
+    shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+
+    REQUIRE(compileWithOpts(filename, compiler, opts) == true);
+
+    shared_ptr<Rom> rom = make_shared<Rom>();
+    REQUIRE(rom->build(compiler) == true);
+
+    CHECK(rom->romSize > 0);
+    CHECK(rom->codeSize > 0);
+    CHECK(rom->kernelShare > 0);
+    CHECK(rom->codeShare > 0);
+    // Without resources the resource share is only the fixed map overhead.
+    CHECK(rom->resourcesShare >= 0);
+    CHECK(rom->resourcesShare < 1.0);
+    CHECK(rom->kernelShare + rom->codeShare + rom->resourcesShare ==
+          doctest::Approx(100.0).epsilon(0.5));
+
+    std::remove(filename.c_str());
+    std::remove(opts->outputFilename.c_str());
+  }
+
+  TEST_CASE("Builds a plain ROM that embeds a DATA resource") {
+    const std::string filename = createTempBas(
+        "rom_data_resource.bas", "10 DATA 1,2,3,4,5\n20 READ A\n30 END\n");
+
+    shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+    shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter =
+        make_shared<Z80OpcodeWriter>();
+    shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+
+    REQUIRE(compileWithOpts(filename, compiler, opts) == true);
+
+    shared_ptr<Rom> rom = make_shared<Rom>();
+    REQUIRE(rom->build(compiler) == true);
+
+    CHECK(rom->resourcesSize > 0);
+    CHECK(rom->resourcesShare > 0);
+    CHECK(rom->kernelShare + rom->codeShare + rom->resourcesShare ==
+          doctest::Approx(100.0).epsilon(1.0));
+
+    std::remove(filename.c_str());
+    std::remove(opts->outputFilename.c_str());
+  }
+
+  TEST_CASE("Builds a Konami4 ROM that embeds a DATA resource") {
+    std::string content = "10 DATA ";
+    for (int i = 0; i < 80; i++) {
+      content += std::to_string(i);
+      if (i < 79) content += ",";
+    }
+    content += "\n20 READ A\n30 END\n";
+    const std::string filename =
+        createTempBas("rom_data_mega.bas", content);
+
+    shared_ptr<BuildOptions> opts = make_shared<BuildOptions>();
+    opts->compileMode = BuildOptions::CompileMode::Konami4;
+    opts->megaROM = true;
+    shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter =
+        make_shared<Z80OpcodeWriter>();
+    shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+
+    REQUIRE(compileWithOpts(filename, compiler, opts) == true);
+
+    shared_ptr<Rom> rom = make_shared<Rom>();
+    REQUIRE(rom->build(compiler) == true);
+
+    CHECK(rom->resourcesSize > 0);
+    CHECK(rom->resourcesShare > 0);
+    CHECK(rom->romSize >= 0x8000);
+    CHECK(rom->kernelShare + rom->codeShare + rom->resourcesShare ==
+          doctest::Approx(100.0).epsilon(1.0));
+
+    std::remove(filename.c_str());
+    std::remove(opts->outputFilename.c_str());
+  }
 }
 
 // NOLINTEND

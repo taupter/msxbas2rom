@@ -94,6 +94,33 @@ TEST_SUITE("CompilerControlStrategies") {
       CHECK(errors.empty());
     }
 
+    SUBCASE("RETURN with multiple leading zero line number") {
+      std::string errors;
+      bool ok = compileStatementProgram(
+          "ret_multizero.bas", "10 GOSUB 20\n20 RETURN 00010\n30 END\n",
+          &errors);
+      CHECK(ok == true);
+      CHECK(errors.empty());
+    }
+
+    SUBCASE("RETURN with a single digit line number") {
+      std::string errors;
+      bool ok = compileStatementProgram(
+          "ret_oneline.bas", "1 END\n10 GOSUB 20\n20 RETURN 1\n30 END\n",
+          &errors);
+      CHECK(ok == true);
+      CHECK(errors.empty());
+    }
+
+    SUBCASE("RETURN with two-digit line number") {
+      std::string errors;
+      bool ok = compileStatementProgram(
+          "ret_twodigit.bas", "10 GOSUB 20\n20 RETURN 99\n30 END\n99 END\n",
+          &errors);
+      CHECK(ok == true);
+      CHECK(errors.empty());
+    }
+
     SUBCASE("RETURN to line in MegaROM mode") {
       const std::string path =
           createTempBas("ret_line_mega.bas", "10 GOSUB 20\n20 RETURN 10\n30 END\n");

@@ -59,6 +59,25 @@ static bool compileStatementProgram(const std::string& filename,
   return ok;
 }
 
+static int compiledCodeSize(const std::string& filename,
+                            const std::string& program) {
+  const std::string path = createTempBas(filename, program);
+
+  shared_ptr<Z80OpcodeWriter> cpuOpcodeWriter = make_shared<Z80OpcodeWriter>();
+  shared_ptr<Compiler> compiler = make_shared<Compiler>(cpuOpcodeWriter);
+  shared_ptr<Lexer> lexer = make_shared<Lexer>();
+  shared_ptr<Parser> parser = make_shared<Parser>();
+
+  bool ok = false;
+  if (lexer->load(path) && lexer->evaluate() && parser->evaluate(lexer)) {
+    ok = compiler->build(parser);
+  }
+
+  std::remove(path.c_str());
+
+  return ok ? compiler->getCodeSize() : -1;
+}
+
 static shared_ptr<CompilerContext> createGraphicsContext() {
   shared_ptr<CpuWorkspaceContext> workspace =
       make_shared<CpuWorkspaceContext>(COMPILE_CODE_SIZE, COMPILE_RAM_SIZE,
@@ -987,6 +1006,116 @@ TEST_SUITE("CompilerPutDirect") {
     strategy.execute(ctx);
     CHECK(ctx->logger->errors().toString().find(
               "PUT SPRITE parameters not supported") != std::string::npos);
+  }
+}
+
+TEST_SUITE("CompilerGraphicsOmittedArguments") {
+  TEST_CASE("PSET omitted coordinate reaches the null branch") {
+    int with_coord =
+        compiledCodeSize("gfx_null_a.bas", "10 PSET (1,5)\n20 END\n");
+    int null_x =
+        compiledCodeSize("gfx_null_b.bas", "10 PSET (,5)\n20 END\n");
+    int null_step_x =
+        compiledCodeSize("gfx_null_c.bas", "10 PSET STEP(,5)\n20 END\n");
+
+    CHECK(with_coord > 0);
+    CHECK(null_x > 0);
+    CHECK(null_step_x > 0);
+    CHECK(with_coord != null_x);
+    CHECK(null_x != null_step_x);
+  }
+
+  TEST_CASE("PRESET omitted coordinate reaches the null branch") {
+    int with_coord =
+        compiledCodeSize("gfx_null_e.bas", "10 PRESET (1,5)\n20 END\n");
+    int null_x =
+        compiledCodeSize("gfx_null_f.bas", "10 PRESET (,5)\n20 END\n");
+    CHECK(with_coord > 0);
+    CHECK(null_x > 0);
+    CHECK(with_coord != null_x);
+  }
+
+  TEST_CASE("COPY omitted coordinates reach the null branch") {
+    int plain =
+        compiledCodeSize("gfx_null_g.bas", "10 COPY (1,5)-(2,6) TO (3,7)\n20 END\n");
+    int null_src_x = compiledCodeSize(
+        "gfx_null_h.bas", "10 COPY (,5)-(2,6) TO (3,7)\n20 END\n");
+    int null_dst_x = compiledCodeSize(
+        "gfx_null_i.bas", "10 COPY (1,5)-(2,6) TO (,7)\n20 END\n");
+
+    CHECK(plain > 0);
+    CHECK(null_src_x > 0);
+    CHECK(null_dst_x > 0);
+    CHECK(plain != null_src_x);
+    CHECK(plain != null_dst_x);
+    CHECK(null_src_x != null_dst_x);
+  }
+
+  TEST_CASE("LINE omitted coordinates reach the null branch") {
+    int plain =
+        compiledCodeSize("gfx_null_j.bas", "10 LINE (1,5)-(2,6)\n20 END\n");
+    int null_end_x =
+        compiledCodeSize("gfx_null_k.bas", "10 LINE (1,5)-(,6)\n20 END\n");
+
+    CHECK(plain > 0);
+    CHECK(null_end_x > 0);
+    CHECK(plain != null_end_x);
+  }
+
+  TEST_CASE("PAINT omitted coordinates reach the null branch") {
+    int with_coord =
+        compiledCodeSize("gfx_null_m.bas", "10 PAINT (1,5),2\n20 END\n");
+    int null_x =
+        compiledCodeSize("gfx_null_n.bas", "10 PAINT (,5),2\n20 END\n");
+    CHECK(with_coord > 0);
+    CHECK(null_x > 0);
+    CHECK(with_coord != null_x);
+  }
+
+  TEST_CASE("CIRCLE omitted coordinates reach the null branch") {
+    int with_coord =
+        compiledCodeSize("gfx_null_o.bas", "10 CIRCLE (1,5),2\n20 END\n");
+    int null_x =
+        compiledCodeSize("gfx_null_p.bas", "10 CIRCLE (,5),2\n20 END\n");
+    CHECK(with_coord > 0);
+    CHECK(null_x > 0);
+    CHECK(with_coord != null_x);
+  }
+
+  TEST_CASE("PUT SPRITE omitted sprite and coordinates reach null branches") {
+    int plain = compiledCodeSize(
+        "gfx_null_q.bas", "10 PUT SPRITE 0,(1,2),15,0\n20 END\n");
+    int null_attrs = compiledCodeSize(
+        "gfx_null_r.bas", "10 PUT SPRITE 0,(10,10),,\n20 END\n");
+    int null_coord_x = compiledCodeSize(
+        "gfx_null_s.bas", "10 PUT SPRITE 0,(,5),15,0\n20 END\n");
+
+    CHECK(plain > 0);
+    CHECK(null_attrs > 0);
+    CHECK(null_coord_x > 0);
+    CHECK(plain != null_attrs);
+    CHECK(plain != null_coord_x);
+  }
+
+  TEST_CASE("COLOR RGB argument counts compile") {
+    int rgb1 =
+        compiledCodeSize("gfx_null_t.bas", "10 COLOR RGB 1\n20 END\n");
+    int rgb2 =
+        compiledCodeSize("gfx_null_u.bas", "10 COLOR RGB 1,2\n20 END\n");
+
+    CHECK(rgb1 > 0);
+    CHECK(rgb2 > 0);
+    CHECK(rgb1 != rgb2);
+  }
+
+  TEST_CASE("COLOR null middle argument compiles and emits less code") {
+    int plain =
+        compiledCodeSize("gfx_null_w.bas", "10 COLOR 1,2,3\n20 END\n");
+    int null_mid =
+        compiledCodeSize("gfx_null_x.bas", "10 COLOR 1,,3\n20 END\n");
+    CHECK(plain > 0);
+    CHECK(null_mid > 0);
+    CHECK(null_mid < plain);
   }
 }
 

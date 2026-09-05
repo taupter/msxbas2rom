@@ -1,7 +1,7 @@
 import json
 import sys
 
-THRESHOLD = 80.0
+THRESHOLD = 85.0
 
 report_path = sys.argv[1] if len(sys.argv) > 1 else 'mutation_report.json'
 

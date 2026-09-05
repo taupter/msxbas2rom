@@ -496,6 +496,39 @@ TEST_SUITE("Lexer") {
       CHECK(state.handle(context) == LexerLineProcessResult::Continue);
       CHECK(context.lexeme->subtype == Lexeme::subtype_numeric);
     }
+
+    SUBCASE("String suffix sets string subtype") {
+      LexerLineEvaluator line;
+      line.lineText = "A$";
+      LexerLineStateContext context(&line);
+      seedLexeme(context, Lexeme::type_identifier, Lexeme::subtype_any, "A");
+      context.current = '$';
+
+      CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+      CHECK(context.lexeme->subtype == Lexeme::subtype_string);
+    }
+
+    SUBCASE("Single decimal suffix sets subtype") {
+      LexerLineEvaluator line;
+      line.lineText = "A!";
+      LexerLineStateContext context(&line);
+      seedLexeme(context, Lexeme::type_identifier, Lexeme::subtype_any, "A");
+      context.current = '!';
+
+      CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+      CHECK(context.lexeme->subtype == Lexeme::subtype_single_decimal);
+    }
+
+    SUBCASE("Double decimal suffix sets subtype") {
+      LexerLineEvaluator line;
+      line.lineText = "A#";
+      LexerLineStateContext context(&line);
+      seedLexeme(context, Lexeme::type_identifier, Lexeme::subtype_any, "A");
+      context.current = '#';
+
+      CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+      CHECK(context.lexeme->subtype == Lexeme::subtype_double_decimal);
+    }
   }
 
   TEST_CASE("KeywordState accumulates keyword characters") {
@@ -554,6 +587,21 @@ TEST_SUITE("Lexer") {
       REQUIRE(lexeme != nullptr);
       CHECK(lexeme->value == "+");
     }
+
+    SUBCASE("Tab terminates operator lexeme") {
+      LexerLineEvaluator line;
+      line.lineText = "+\tA";
+      LexerLineStateContext context(&line);
+      seedLexeme(context, Lexeme::type_operator, Lexeme::subtype_any, "+");
+      context.index = 0;
+      context.current = '\t';
+
+      CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+      REQUIRE(line.getLexemeCount() == 1);
+      shared_ptr<Lexeme> lexeme = line.getLexeme(0);
+      REQUIRE(lexeme != nullptr);
+      CHECK(lexeme->value == "+");
+    }
   }
 
   TEST_CASE("SeparatorState appends or pushes separators") {
@@ -583,6 +631,20 @@ TEST_SUITE("Lexer") {
       REQUIRE(lexeme != nullptr);
       CHECK(lexeme->value == ":");
     }
+
+    SUBCASE("Space terminates separator lexeme") {
+      LexerLineEvaluator line;
+      line.lineText = ": ";
+      LexerLineStateContext context(&line);
+      seedLexeme(context, Lexeme::type_separator, Lexeme::subtype_any, ":");
+      context.current = ' ';
+
+      CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+      REQUIRE(line.getLexemeCount() == 1);
+      shared_ptr<Lexeme> lexeme = line.getLexeme(0);
+      REQUIRE(lexeme != nullptr);
+      CHECK(lexeme->value == ":");
+    }
   }
 
   TEST_CASE("CommentState currently ends immediately") {
@@ -599,6 +661,32 @@ TEST_SUITE("Lexer") {
     shared_ptr<Lexeme> lexeme = line.getLexeme(0);
     REQUIRE(lexeme != nullptr);
     CHECK(lexeme->value == "REM");
+  }
+
+  TEST_CASE("CommentState handles whitespace boundary") {
+    CommentState state;
+
+    LexerLineEvaluator line;
+    line.lineText = "REM ";
+    LexerLineStateContext context(&line);
+    seedLexeme(context, Lexeme::type_comment, Lexeme::subtype_any, "REM");
+    context.current = ' ';
+
+    CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+    REQUIRE(line.getLexemeCount() == 1);
+  }
+
+  TEST_CASE("CommentState pushes lexeme for every character") {
+    CommentState state;
+
+    LexerLineEvaluator line;
+    line.lineText = "REMA";
+    LexerLineStateContext context(&line);
+    seedLexeme(context, Lexeme::type_comment, Lexeme::subtype_any, "RE");
+    context.current = 'M';
+
+    CHECK(state.handle(context) == LexerLineProcessResult::Continue);
+    REQUIRE(line.getLexemeCount() == 1);
   }
 
   TEST_CASE("Navigates lexemes in LexerLine") {
