@@ -87,3 +87,25 @@ __pycache__/
 .env
 .env.local
 
+# Mutation testing artifacts
+compile_commands.json
+compile_commands.events.json
+mutation_report.json
+obj/Mutation/
+bin/Mutation/
+
+# Bear compilation database (pode ser gerado em outros diretórios também)
+*.compile_commands.json
+
+# Mull related files
+*.mull.yml
+.mull/
+mull-output/
+*.mutation-test.json
+
+# Additional build artifacts that might be generated
+*.gcda
+*.gcno
+*.gcov
+*.prof
+*.profraw

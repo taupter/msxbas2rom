@@ -40,8 +40,8 @@ bool CompilerCmdMtfHandler::execute(shared_ptr<CompilerContext> context,
                                     shared_ptr<ActionNode> action) {
   auto& cpu = *context->cpu;
   auto& expression = *context->expressionEvaluator;
-  bool isARegNotZero[1];
-  bool isHLRegNotZero[2];
+  bool isARegNotZero[2];
+  bool isHLRegNotZero[3];
 
   int n = action->actions.size();
 

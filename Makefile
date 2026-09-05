@@ -3,7 +3,7 @@
 # by Amaury Carvalho (2022-2026)                                               #
 #------------------------------------------------------------------------------#
 
-.PHONY: all clean debug release lint test coverage lint-full test-clean test-unit test-integration test-coverage test-kernel debian rpm clean_debug before_debug out_debug after_debug clean_release before_release out_release after_release
+.PHONY: all clean debug release lint test coverage lint-full test-clean test-unit test-integration test-coverage test-kernel mutation-clean mutation-build mutation-run mutation-check debian rpm clean_debug before_debug out_debug after_debug clean_release before_release out_release after_release
 
 # ----------------------------
 # Variables
@@ -69,11 +69,37 @@ BINDIR_RELEASE = bin/Release
 DEP_RELEASE = 
 OUT_RELEASE = $(BINDIR_RELEASE)/msxbas2rom
 
+# ----------------------------
+# Mutation Testing Variables
+# ----------------------------
+
+MUTATION_CLANG = clang++-18
+MUTATION_FRONTEND = /usr/lib/mull-ir-frontend-18
+MUTATION_CFLAGS = -Wall -fexceptions -std=c++11 -g -O0 $(OSFLAG) -grecord-command-line -fprofile-instr-generate -fcoverage-mapping
+MUTATION_CPPFLAGS = $(CPPFLAGS) -Itests/unit
+MUTATION_LDFLAGS = -static-libstdc++ -static-libgcc
+MUTATION_OBJDIR = obj/Mutation
+MUTATION_BINDIR = bin/Mutation
+MUTATION_OUT = $(MUTATION_BINDIR)/test_unit
+MUTATION_COMPILE_DB = compile_commands.json
+MUTATION_REPORT_NAME = mutation_report
+MUTATION_REPORT = $(MUTATION_REPORT_NAME).json
+
+# ----------------------------
+# Building Variables
+# ----------------------------
+
 SRC_FILES = $(shell find $(SRC) -name '*.cpp' | sort)
 OBJ_DEBUG = $(patsubst $(SRC)/%.cpp,$(OBJDIR_DEBUG)/%.o,$(SRC_FILES))
 OBJ_RELEASE = $(patsubst $(SRC)/%.cpp,$(OBJDIR_RELEASE)/%.o,$(SRC_FILES))
+SRC_FILES_MUTATION = $(shell find $(SRC) -name '*.cpp' ! -path '$(SRC)/cli/main.cpp' | sort)
+OBJ_MUTATION = $(patsubst $(SRC)/%.cpp,$(MUTATION_OBJDIR)/%.o,$(SRC_FILES_MUTATION))
+TEST_UNIT_DIR = tests/unit
+TEST_UNIT_SRC_FILES = $(shell find $(TEST_UNIT_DIR)/src -name 'test_*.cpp' | sort)
+OBJ_MUTATION_TEST = $(patsubst $(TEST_UNIT_DIR)/src/%.cpp,$(MUTATION_OBJDIR)/test/%.o,$(TEST_UNIT_SRC_FILES))
 DEP_DEBUG = $(OBJ_DEBUG:.o=.d)
 DEP_RELEASE = $(OBJ_RELEASE:.o=.d)
+DEP_MUTATION = $(OBJ_MUTATION:.o=.d) $(OBJ_MUTATION_TEST:.o=.d)
 
 DIST_DIR = dist
 DEB_DIR = ..
@@ -150,10 +176,10 @@ $(OUT_RELEASE): $(OBJ_RELEASE)
 	@echo "📦 Building binary $@..."
 	@$(LD) $(LIBDIR_RELEASE) -o $(OUT_RELEASE) $(OBJ_RELEASE)  $(LDFLAGS_RELEASE) $(LIB_RELEASE)
 
-$(OBJDIR_DEBUG) $(OBJDIR_RELEASE):
+$(OBJDIR_DEBUG) $(OBJDIR_RELEASE) $(MUTATION_OBJDIR) $(MUTATION_BINDIR):
 	@mkdir -p $@
 
--include $(DEP_DEBUG) $(DEP_RELEASE)
+-include $(DEP_DEBUG) $(DEP_RELEASE) $(DEP_MUTATION)
 
 # ----------------------------
 # Linting
@@ -202,6 +228,52 @@ test-clean:
 	@$(MAKE) -C tests/unit clean
 	@$(MAKE) -C tests/integration clean
 	@echo "✅ Cleaning test finished"
+
+# ----------------------------
+# Mutation Testing
+# ----------------------------
+
+mutation-clean:
+	@echo "🧹 Cleaning mutation testing artifacts..."
+	@rm -rf $(MUTATION_OBJDIR) $(MUTATION_BINDIR)
+	@rm -f $(MUTATION_COMPILE_DB) $(MUTATION_REPORT) $(MUTATION_REPORT_NAME).html
+	@echo "✅ Mutation testing artifacts cleaned"
+
+$(MUTATION_OBJDIR)/%.o: $(SRC)/%.cpp | $(MUTATION_OBJDIR)
+	@echo "🧪 Compiling (mull) source module $<..."
+	@mkdir -p $(dir $@)
+	@$(MUTATION_CLANG) $(MUTATION_CPPFLAGS) $(MUTATION_CFLAGS) -fpass-plugin=$(MUTATION_FRONTEND) $(DEPFLAGS) -c $< -o $@
+
+$(MUTATION_OBJDIR)/test/%.o: $(TEST_UNIT_DIR)/src/%.cpp | $(MUTATION_OBJDIR)
+	@echo "🧪 Compiling unit test $<..."
+	@mkdir -p $(dir $@)
+	@$(MUTATION_CLANG) $(MUTATION_CPPFLAGS) $(MUTATION_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(MUTATION_BINDIR)/test_unit: $(OBJ_MUTATION) $(OBJ_MUTATION_TEST) | $(MUTATION_BINDIR)
+	@echo "📦 Linking mutation test binary $@..."
+	@$(MUTATION_CLANG) -o $@ $^ $(MUTATION_LDFLAGS)
+
+mutation-build: $(MUTATION_OUT)
+	@echo "✅ Mutation test binary ready: $(MUTATION_OUT)"
+
+mutation-run:
+	@echo "🔄 Running mull-runner over the doctest unit suite..."
+	@mkdir -p tests/unit/tmp
+	@cd tests/unit && MULL_CONFIG="$(CURDIR)/mull.yml" mull-runner-18 \
+		--reporters Elements \
+		--report-dir "$(CURDIR)" \
+		--report-name $(MUTATION_REPORT_NAME) \
+		--timeout 60000 \
+		--minimum-timeout 60000 \
+		--mutation-score-threshold 80 \
+		--allow-surviving \
+		--no-test-output \
+		"$(abspath $(MUTATION_OUT))"
+	@echo "✅ Mutation tests completed. Report saved to $(MUTATION_REPORT)"
+
+mutation-check:
+	@echo "🔍 Checking mutation score..."
+	@python3 scripts/check-mutation-score.py "$(MUTATION_REPORT)"
 
 # -----------------------------------------------
 # Debian package build

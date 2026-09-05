@@ -147,7 +147,18 @@ And run integration testing as well:
 make test-integration
 ```
 
-Create new test scenarios if need.
+You can also run a mutation testing (`bear`, `clang` and `mull` are required):
+
+```bash
+make mutation-clean
+make mutation-build
+make mutation-run
+make mutation-check
+```
+
+Mutation testing can be time-consuming and require significant processing. When finished, use `mutation_report.json` with your AI agent to fix your unit tests.
+
+**Create new test scenarios, if necessary.**
 
 ### 7️⃣ Submit Your Pull Request
 
